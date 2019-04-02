@@ -1,0 +1,15 @@
+*.pyc
+.DS*
+._.*
+*~
+._*
+env
+venv
+*__pycache__
+*.swp
+*.db
+*.egg-info/
+*._*
+.nfs*
+vendor
+server
