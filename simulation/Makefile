@@ -1,8 +1,6 @@
 NAME = server
 
-all: $(NAME)
-
-$(NAME): *.go
+all:
 	@printf "\e[33;1mBuilding.. \e[0m\n"
 	@go build -o $(NAME)
 	@printf "\e[32;1mCreated:\e[0m %s\n" $(NAME)

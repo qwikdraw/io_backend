@@ -5,6 +5,9 @@ import (
 	"log"
 	"net/http"
 	ws "github.com/gorilla/websocket"
+	"fmt"
+	gp "server/game_protocol"
+	proto "github.com/golang/protobuf/proto"
 )
 
 var addr = flag.String("addr", "0.0.0.0:3000", "http service address")
@@ -42,8 +45,16 @@ func binary_response(w http.ResponseWriter, r *http.Request) {
 }
 
 func main() {
+	update := &gp.Update{
+		Time: 634.0,
+		Remove: []uint32{1, 2, 3},
+	}
+	out, _ := proto.Marshal(update)
+	fmt.Println(len(out), out)
+
 	flag.Parse()
 	log.SetFlags(0)
+	fmt.Printf("Server listening on %s\n", *addr)
 	http.HandleFunc("/", binary_response)
 	log.Fatal(http.ListenAndServe(*addr, nil))
 }
