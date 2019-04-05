@@ -8,6 +8,7 @@ import (
 	"fmt"
 	gp "server/game_protocol"
 	proto "github.com/golang/protobuf/proto"
+    "encoding/binary"
 )
 
 var addr = flag.String("addr", "0.0.0.0:3000", "http service address")
@@ -25,7 +26,23 @@ func binary_response(w http.ResponseWriter, r *http.Request) {
 	}
 	defer c.Close()
 
-	msg, err := ws.NewPreparedMessage(ws.BinaryMessage, []byte{3,2,1})
+	test_enity := &gp.Entity{
+		Id: 23,
+		Renderable: []uint32{42, 56},
+	}
+	update := &gp.Update{
+		Time: 634.0,
+		Update: []*gp.Entity{test_enity},
+		Remove: []uint32{1, 2, 3},
+	}
+	out, _ := proto.Marshal(update)
+	packet := make([]byte, 2, len(out) + 2)
+	binary.LittleEndian.PutUint16(packet, uint16(len(out)))
+	packet = append(packet, out...)
+
+	fmt.Println(packet)
+
+	msg, err := ws.NewPreparedMessage(ws.BinaryMessage, packet)
 	if err != nil {
 		log.Print("prepare:", err)
 	}
@@ -45,13 +62,6 @@ func binary_response(w http.ResponseWriter, r *http.Request) {
 }
 
 func main() {
-	update := &gp.Update{
-		Time: 634.0,
-		Remove: []uint32{1, 2, 3},
-	}
-	out, _ := proto.Marshal(update)
-	fmt.Println(len(out), out)
-
 	flag.Parse()
 	log.SetFlags(0)
 	fmt.Printf("Server listening on %s\n", *addr)
