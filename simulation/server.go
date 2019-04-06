@@ -26,13 +26,13 @@ func binary_response(w http.ResponseWriter, r *http.Request) {
 	}
 	defer c.Close()
 
-	test_enity := &gp.Entity{
+	test_entity := &gp.Entity{
 		Id: 23,
 		Renderable: []uint32{42, 56},
 	}
 	update := &gp.Update{
 		Time: 634.0,
-		Update: []*gp.Entity{test_enity},
+		Update: []*gp.Entity{test_entity},
 		Remove: []uint32{1, 2, 3},
 	}
 	out, _ := proto.Marshal(update)
