@@ -9,7 +9,8 @@ Find these in the `simulation` and `users` folders respectively.
 ## Protocol
 Server-client communication is done with a [protocal buffer](https://developers.google.com/protocol-buffers/)
 based message system.
-Protocal buffers are used because they use bandwidth and serialization time efficient more efficently.
+Protocal buffers were chosen because they use bandwidth and serialization time more efficently than JSON,
+especially for WASM.
 
 ## Building
 
