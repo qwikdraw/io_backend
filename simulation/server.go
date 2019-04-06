@@ -8,7 +8,7 @@ import (
 	"fmt"
 	gp "server/game_protocol"
 	proto "github.com/golang/protobuf/proto"
-    "encoding/binary"
+	"encoding/binary"
 )
 
 var addr = flag.String("addr", "0.0.0.0:3000", "http service address")
