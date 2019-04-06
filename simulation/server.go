@@ -36,7 +36,7 @@ func binary_response(w http.ResponseWriter, r *http.Request) {
 		Remove: []uint32{1, 2, 3},
 	}
 	out, _ := proto.Marshal(update)
-	packet := make([]byte, 2, len(out))
+	packet := make([]byte, 2, len(out) + 2)
 	binary.LittleEndian.PutUint16(packet, uint16(len(out)))
 	packet = append(packet, out...)
 
