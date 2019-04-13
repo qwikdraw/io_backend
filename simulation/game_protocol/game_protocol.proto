@@ -1,25 +1,55 @@
 syntax = "proto3";
+package game_protocol;
+
 option optimize_for = LITE_RUNTIME;
 
 message Entity {
-	uint32 id = 1;
-	double created = 2;
-	float pos_x = 3;
-	float pos_y = 4;
-	/* Used for client side prediction of next position */
-	float vel_x = 5;
-	float vel_y = 6;
-	/* Visual direction */
-	float dir_x = 7;
-	float dir_y = 8;
-	/* Renderables are ids of different ways the object sould be rendered,
-	 * for example as a cloud of smoke or a texture. */
-	repeated uint32 renderable = 9;
+    uint32 id = 1;
+    double created = 2;
+    float pos_x = 3;
+    float pos_y = 4;
+    /* Used for client side prediction of next position */
+    float vel_x = 5;
+    float vel_y = 6;
+    /* Visual direction */
+    float dir_x = 7;
+    float dir_y = 8;
+    /* Renderables are ids of different ways the object sould be rendered,
+     * for example as a cloud of smoke or a texture. */
+    repeated Renderable renderable = 9;
+    /* player names and chat bars */
+    string name = 10;
+    string chat = 11;
+}
+
+message Renderable {
+    uint32 id = 1;
+    /* RGBA */
+    uint32 color = 2;
+    float size = 3;
 }
 
 message Update {
-	/* Used to keep update order and to calulate */
-	double time = 1;
-	repeated Entity update = 2;
-	repeated uint32 remove = 3;
+    /* Used to keep update order and to calulate */
+    double time = 1;
+    repeated Entity entity = 2;
+    /* ids of entities to remove */
+    repeated uint32 remove = 3;
+}
+
+enum Action {
+    NOTHING = 0;
+    GUN = 1;
+}
+
+message Status {
+    /* identify the player */
+    uint64 player_id = 1;
+    /* Used to signal what direction player moves in */
+    float vel_x = 2;
+    float vel_y = 3;
+    float dir_x = 4;
+    float dir_y = 5;
+    /* Actions */
+    repeated Action action = 6;
 }
