@@ -11,6 +11,9 @@ import (
 	"encoding/binary"
 	"math"
 	"time"
+	"github.com/ByteArena/box2d"
+	"sync"
+	"sync/atomic"
 )
 
 
@@ -19,32 +22,126 @@ const (
 	writeWait = 10 * time.Second
 
 	// Time allowed to read the next pong message from the peer.
-	pongWait = 60 * time.Second
+	pongWait = 10 * time.Second
 
 	// Send pings to peer with this period. Must be less than pongWait.
-	pingPeriod = (pongWait * 9) / 10
+	pingPeriod = (pongWait * 9) / 20
 )
 
 
+type Entity interface {
+	Id() uint32
+	Type() uint32
+	Update(float64)
+	Renderables() []*gp.Renderable
+	PosX() float64
+	PosY() float64
+	VelX() float64
+	VelY() float64
+	DirX() float64
+	DirY() float64
+}
+
+type Player struct {
+	id uint32
+	Input chan *gp.Status
+	Body *box2d.B2Body
+	renderables []*gp.Renderable
+}
+
+func (p *Player) Id() uint32 {
+	return p.id
+}
+
+func (p *Player) Type() uint32 {
+	return 1
+}
+
+func (p *Player) Update(dt float64) {
+	select {
+		case in := <- p.Input:
+			imp := box2d.B2Vec2{
+				X: float64(in.VelX),
+				Y: float64(in.VelY),
+			}
+			p.Body.SetLinearVelocity(imp)
+	}
+}
+
+func (p *Player) Renderables() []*gp.Renderable {
+	return p.renderables
+}
+
+func (p *Player) PosX() float64 {
+	return p.Body.GetPosition().X
+}
+
+func (p *Player) PosY() float64 {
+	return p.Body.GetPosition().Y
+}
+
+func (p *Player) VelX() float64 {
+	return p.Body.GetLinearVelocity().X
+}
+
+func (p *Player) VelY() float64 {
+	return p.Body.GetLinearVelocity().Y
+}
+
+func (p *Player) DirX() float64 {
+	return math.Sin(p.Body.GetAngle())
+}
+
+func (p *Player) DirY() float64 {
+	return math.Cos(p.Body.GetAngle())
+}
+
+func makePlayer(server *Server) *Player {
+	bd := box2d.MakeB2BodyDef()	
+	bd.Position.Set(0.0, 0.0)
+	bd.Type = box2d.B2BodyType.B2_dynamicBody
+	bd.FixedRotation = true
+	bd.AllowSleep = true
+	body := server.world.CreateBody(&bd)
+	shape := box2d.MakeB2CircleShape()
+	shape.M_radius = 0.5
+	fd := box2d.MakeB2FixtureDef()
+	fd.Shape = &shape
+	fd.Density = 1.0
+	fd.Restitution = 0.3
+	body.CreateFixtureFromDef(&fd)
+	test_renderable := &gp.Renderable{
+		Id: 1,
+		Color: 0,
+		Size: 0.5, 
+	}
+	return &Player{
+		id: atomic.AddUint32(&server.id_counter, 1),
+		Input: make(chan *gp.Status),
+		Body: body,
+		renderables: []*gp.Renderable{test_renderable},
+	}
+}
+
 type Client struct {
-	world *World
+	server *Server
 
 	// The websocket connection.
 	conn *ws.Conn
 
-	// Buffered channel of outbound messages.
+	// Channel of outbound messages.
 	send chan *ws.PreparedMessage
+
+	player *Player
 }
 
-type World struct {
+type Server struct {
 	// Start of server time
 	start time.Time
+	last time.Time
 
 	// Registered clients.
 	clients map[*Client]bool
-
-	// Input messages from the clients.
-	input chan []byte
 
 	// Outging updates from the server
 	update chan []byte
@@ -54,88 +151,115 @@ type World struct {
 
 	// Client leave
 	leave chan *Client
+
+	// Physics world
+	world box2d.B2World
+
+	// Entities
+	entities []Entity
+	entities_lock sync.RWMutex
+
+	id_counter uint32
 }
 
-func makeWorld() *World {
-	return &World{
+func makeServer() *Server {
+	gravity := box2d.MakeB2Vec2(0.0, 0.0)
+
+	// Construct a world object, which will hold and simulate the rigid bodies.
+	world := box2d.MakeB2World(gravity)
+
+	return &Server{
 		start: time.Now(),
+		last: time.Now(),
 		clients: make(map[*Client]bool),
-		input: make(chan []byte),
 		update: make(chan []byte),
 		join: make(chan *Client),
 		leave: make(chan *Client),
+		world: world,
+		entities: make([]Entity, 0, 4),
+		id_counter: 0,
 	}
 }
 
-func (world *World) run_networking() {
+func (server *Server) run_events() {
 	for {
 		select {
-		case client := <-world.join:
-			world.clients[client] = true
-		case client := <-world.leave:
-			if _, exists := world.clients[client]; exists {
-				delete(world.clients, client)
+		case client := <-server.join:
+			server.clients[client] = true
+			fmt.Println("Client joined: ", client.player.Id())
+		case client := <-server.leave:
+			if _, exists := server.clients[client]; exists {
+				delete(server.clients, client)
 				close(client.send)
-				client.conn.Close()
-				log.Print("client left")
+				ded := client.player.Id()
+				fmt.Println("Client left: ", ded)
+				server.entities_lock.Lock()
+
+				ded_index := 0
+				for i, ent := range server.entities {
+					if ent.Id() == ded {
+						ded_index = i
+						break
+					}
+				}
+				if ded_index != 0 {
+					server.entities = append(server.entities[:ded_index], server.entities[ded_index + 1:]...)
+				}
+				server.world.DestroyBody(client.player.Body)
+
+				server.entities_lock.Unlock()
+				fmt.Println("Unlock after player death")
 			}
-		case message := <-world.input:
-			// Handle client input here.
-			status := &gp.Status{}
-			proto.Unmarshal(message, status)
-			log.Print("client: ", status)
-		case update := <-world.update:
+		case update := <-server.update:
 			msg, err := ws.NewPreparedMessage(ws.BinaryMessage, update)
 			if err != nil {
 				log.Print("prepare_error:", err)
 			}
-			for client := range world.clients {
+			for client := range server.clients {
 				select {
 				case client.send <- msg:
 				default:
-					close(client.send)
-					delete(world.clients, client)
+					server.leave <- client
 				}
 			}
 		}
 	}
 }
 
-func (world *World) run_simulation() {
+func (server *Server) run_simulation() {
 	for {
+		server.entities_lock.Lock()
 		now := time.Now()
-		server_time := now.Sub(world.start).Seconds()
+		delta := now.Sub(server.last).Seconds()
+		server.last = now
 
-		fmt.Println(server_time)
-		test_renderable := &gp.Renderable{
-			Id: 1,
-			Color: 0,
-			Size: 0.4, 
-		}
-		test_entity := &gp.Entity{
-			Id: 23,
-			PosX: float32(math.Sin(server_time)),
-			PosY: -0.4,//float32(math.Cos(server_time)),
-			VelX: float32(math.Cos(server_time)),
-			VelY: 0.0,//-float32(math.Sin(server_time)),
-			Renderable: []*gp.Renderable{test_renderable},
-		}
-		test_entity_2 := &gp.Entity{
-			Id: 24,
-			PosX: float32(math.Sin(server_time * 0.3)),
-			PosY: 0.4,//float32(math.Cos(server_time)),
-			VelX: float32(math.Cos(server_time * 0.3) / 3.0),
-			VelY: 0.0,//-float32(math.Sin(server_time)),
-			Renderable: []*gp.Renderable{test_renderable},
-		}
+		server_time := now.Sub(server.start).Seconds()
+		server.world.Step(delta, 4, 4)
 		update := &gp.Update{
 			Time: server_time,
-			Entity: []*gp.Entity{test_entity, test_entity_2},
-			Remove: []uint32{1, 2},
+			Entity: make([]*gp.Entity, 0, len(server.entities)),
 			CamX: 0.0,
-			CamY: float32(math.Cos(server_time)),
-			CamScale: 2.0 + float32(math.Cos(server_time)),
+			CamY: 0.0,
+			CamScale: 1.5,
 		}
+		for _, ent := range server.entities {
+			ent.Update(delta)
+
+			// Create entity update packet
+			ent_update := &gp.Entity{
+				Id: ent.Id(),
+				PosX: float32(ent.PosX()),
+				PosY: float32(ent.PosY()),
+				VelX: float32(ent.VelX()),
+				VelY: float32(ent.VelY()),
+				DirX: float32(ent.DirX()),
+				DirY: float32(ent.DirY()),
+				Renderable: ent.Renderables(),
+			}
+			fmt.Println(ent_update.PosX, ent_update.PosY)
+			update.Entity = append(update.Entity, ent_update)
+		}
+		server.entities_lock.Unlock()
 		out, err := proto.Marshal(update)
 		if err != nil {
 			log.Print(err)
@@ -143,7 +267,7 @@ func (world *World) run_simulation() {
 		packet := make([]byte, 2, len(out) + 2)
 		binary.LittleEndian.PutUint16(packet, uint16(len(out)))
 		packet = append(packet, out...)
-		world.update <- packet
+		server.update <- packet
 		// Sleep for 1/30th of a seccond
 		time.Sleep(33330000)
 	}
@@ -158,7 +282,7 @@ var upgrader = ws.Upgrader{
 
 func (c *Client) readUpdate() {
 	defer func() {
-		c.world.leave <- c
+		c.server.leave <- c
 		c.conn.Close()
 	}()
 
@@ -172,7 +296,14 @@ func (c *Client) readUpdate() {
 			}
 			break
 		}
-		c.world.input <- message
+		status := &gp.Status{}
+		proto.Unmarshal(message, status)
+		if c.player != nil {
+			select {
+				case c.player.Input <- status:
+				default:
+			}
+		}
 	}
 }
 
@@ -207,20 +338,30 @@ func (c *Client) sendUpdate() {
 	}
 }
 
-func handleClient(world *World, w http.ResponseWriter, r *http.Request) {
+func handleClient(server *Server, w http.ResponseWriter, r *http.Request) {
+	fmt.Println("Client connecting..")
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		log.Print("upgrade error:", err)
 		return
 	}
+	fmt.Println("A")
 
 	client := &Client{
-		world: world,
+		server: server,
 		conn: conn,
 		send: make(chan *ws.PreparedMessage),
+		player: makePlayer(server),
 	}
-	world.join <- client
+	fmt.Println("B")
 
+	server.entities_lock.Lock()
+	fmt.Println("B2")
+	server.entities = append(server.entities, client.player)
+	server.entities_lock.Unlock()
+
+	fmt.Println("C")
+	server.join <- client
 	go client.readUpdate()
 	go client.sendUpdate()
 }
@@ -229,11 +370,11 @@ func main() {
 	flag.Parse()
 	log.SetFlags(0)
 	fmt.Printf("Server listening on %s\n", *addr)
-	world := makeWorld()
-	go world.run_networking()
-	go world.run_simulation()
+	server := makeServer()
+	go server.run_events()
+	go server.run_simulation()
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		handleClient(world, w, r)
+		handleClient(server, w, r)
 	})
 	log.Fatal(http.ListenAndServe(*addr, nil))
 }
